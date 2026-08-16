@@ -33,10 +33,10 @@ class _AnalysisScreenState extends State<AnalysisScreen> {
 
   final NumberFormat _moneyFormat = NumberFormat('#,###');
 
-  int get _activeFixedCostTotal {
+  int _activeFixedCostTotalForMonth(DateTime month) {
     return widget.fixedCosts
         .where((fixedCost) => fixedCost.isActive)
-        .fold(0, (total, fixedCost) => total + fixedCost.amount);
+        .fold(0, (total, fixedCost) => total + fixedCost.amountForMonth(month));
   }
 
   List<_ChartData> _createChartData() {
@@ -82,7 +82,11 @@ class _AnalysisScreenState extends State<AnalysisScreen> {
       return _ChartData(
         label: '$day日',
         income: incomeTotal,
-        expense: expenseTotal + (day == 1 ? _activeFixedCostTotal : 0),
+        expense:
+            expenseTotal +
+            (day == 1
+                ? _activeFixedCostTotalForMonth(DateTime(year, month))
+                : 0),
       );
     });
   }
@@ -109,7 +113,8 @@ class _AnalysisScreenState extends State<AnalysisScreen> {
       return _ChartData(
         label: '$month月',
         income: incomeTotal,
-        expense: expenseTotal + _activeFixedCostTotal,
+        expense:
+            expenseTotal + _activeFixedCostTotalForMonth(DateTime(year, month)),
       );
     });
   }
@@ -129,12 +134,76 @@ class _AnalysisScreenState extends State<AnalysisScreen> {
           .where((income) => income.date.year == year)
           .fold(0, (total, income) => total + income.amount);
 
+      final int fixedCostTotal = List.generate(12, (monthIndex) {
+        return _activeFixedCostTotalForMonth(DateTime(year, monthIndex + 1));
+      }).fold(0, (total, amount) => total + amount);
+
       return _ChartData(
         label: '$year年',
         income: incomeTotal,
-        expense: expenseTotal + (_activeFixedCostTotal * 12),
+        expense: expenseTotal + fixedCostTotal,
       );
     });
+  }
+
+  List<_AnnualCategoryData> _createAnnualCategoryData() {
+    final int year = widget.selectedMonth.year;
+    final Map<String, List<int>> monthlyTotals = {};
+
+    for (final Expense expense in widget.expenses.where(
+      (expense) => expense.date.year == year,
+    )) {
+      final List<int> totals = monthlyTotals.putIfAbsent(
+        expense.category,
+        () => List<int>.filled(12, 0),
+      );
+
+      totals[expense.date.month - 1] += expense.amount;
+    }
+
+    for (final FixedCost fixedCost in widget.fixedCosts.where(
+      (fixedCost) => fixedCost.isActive,
+    )) {
+      final List<int> totals = monthlyTotals.putIfAbsent(
+        fixedCost.category,
+        () => List<int>.filled(12, 0),
+      );
+
+      for (int monthIndex = 0; monthIndex < 12; monthIndex++) {
+        totals[monthIndex] += fixedCost.amountForMonth(
+          DateTime(year, monthIndex + 1),
+        );
+      }
+    }
+
+    final List<_AnnualCategoryData> data = monthlyTotals.entries
+        .map((entry) {
+          final int annualTotal = entry.value.fold(
+            0,
+            (total, amount) => total + amount,
+          );
+
+          int highestMonthIndex = 0;
+
+          for (int index = 1; index < entry.value.length; index++) {
+            if (entry.value[index] > entry.value[highestMonthIndex]) {
+              highestMonthIndex = index;
+            }
+          }
+
+          return _AnnualCategoryData(
+            category: entry.key,
+            annualTotal: annualTotal,
+            monthlyAverage: (annualTotal / 12).round(),
+            highestMonth: highestMonthIndex + 1,
+            highestMonthAmount: entry.value[highestMonthIndex],
+          );
+        })
+        .where((item) => item.annualTotal > 0)
+        .toList();
+
+    data.sort((a, b) => b.annualTotal.compareTo(a.annualTotal));
+    return data;
   }
 
   String _periodTitle() {
@@ -154,6 +223,10 @@ class _AnalysisScreenState extends State<AnalysisScreen> {
   @override
   Widget build(BuildContext context) {
     final List<_ChartData> data = _createChartData();
+    final List<_AnnualCategoryData> annualCategoryData =
+        _selectedPeriod == AnalysisPeriod.oneYear
+        ? _createAnnualCategoryData()
+        : const [];
 
     final int incomeTotal = data.fold(0, (total, item) => total + item.income);
 
@@ -339,6 +412,54 @@ class _AnalysisScreenState extends State<AnalysisScreen> {
             ),
           ),
         ),
+        if (_selectedPeriod == AnalysisPeriod.oneYear) ...[
+          const SizedBox(height: 24),
+          Text(
+            '${widget.selectedMonth.year}年　カテゴリ別支出比較',
+            style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+          ),
+          const SizedBox(height: 8),
+          if (annualCategoryData.isEmpty)
+            const Card(
+              child: Padding(
+                padding: EdgeInsets.all(24),
+                child: Center(child: Text('この年の支出記録はありません')),
+              ),
+            )
+          else
+            Card(
+              child: SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: DataTable(
+                  columns: const [
+                    DataColumn(label: Text('カテゴリ')),
+                    DataColumn(label: Text('年間合計'), numeric: true),
+                    DataColumn(label: Text('月平均'), numeric: true),
+                    DataColumn(label: Text('最も多い月')),
+                  ],
+                  rows: annualCategoryData.map((item) {
+                    return DataRow(
+                      cells: [
+                        DataCell(Text(item.category)),
+                        DataCell(
+                          Text('¥${_moneyFormat.format(item.annualTotal)}'),
+                        ),
+                        DataCell(
+                          Text('¥${_moneyFormat.format(item.monthlyAverage)}'),
+                        ),
+                        DataCell(
+                          Text(
+                            '${item.highestMonth}月\n'
+                            '¥${_moneyFormat.format(item.highestMonthAmount)}',
+                          ),
+                        ),
+                      ],
+                    );
+                  }).toList(),
+                ),
+              ),
+            ),
+        ],
         const SizedBox(height: 16),
         Text(
           '支出には有効になっている固定費を含みます。',
@@ -360,6 +481,22 @@ class _ChartData {
   final String label;
   final int income;
   final int expense;
+}
+
+class _AnnualCategoryData {
+  const _AnnualCategoryData({
+    required this.category,
+    required this.annualTotal,
+    required this.monthlyAverage,
+    required this.highestMonth,
+    required this.highestMonthAmount,
+  });
+
+  final String category;
+  final int annualTotal;
+  final int monthlyAverage;
+  final int highestMonth;
+  final int highestMonthAmount;
 }
 
 class _SummaryCard extends StatelessWidget {

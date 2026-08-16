@@ -15,6 +15,8 @@ class RecordScreen extends StatefulWidget {
     required this.onDeleteExpense,
     required this.onEditIncome,
     required this.onDeleteIncome,
+    required this.initialType,
+    required this.onTypeChanged,
   });
 
   final List<Expense> expenses;
@@ -25,15 +27,32 @@ class RecordScreen extends StatefulWidget {
 
   final void Function(IncomeRecord income) onEditIncome;
   final void Function(IncomeRecord income) onDeleteIncome;
+  final RecordType initialType;
+  final ValueChanged<RecordType> onTypeChanged;
 
   @override
   State<RecordScreen> createState() => _RecordScreenState();
 }
 
 class _RecordScreenState extends State<RecordScreen> {
-  RecordType _selectedType = RecordType.expense;
+  late RecordType _selectedType;
 
   final NumberFormat _moneyFormat = NumberFormat('#,###');
+
+  @override
+  void initState() {
+    super.initState();
+    _selectedType = widget.initialType;
+  }
+
+  @override
+  void didUpdateWidget(covariant RecordScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+
+    if (oldWidget.initialType != widget.initialType) {
+      _selectedType = widget.initialType;
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -56,9 +75,13 @@ class _RecordScreenState extends State<RecordScreen> {
             ],
             selected: {_selectedType},
             onSelectionChanged: (selection) {
+              final RecordType selectedType = selection.first;
+
               setState(() {
-                _selectedType = selection.first;
+                _selectedType = selectedType;
               });
+
+              widget.onTypeChanged(selectedType);
             },
           ),
         ),

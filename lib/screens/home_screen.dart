@@ -16,6 +16,10 @@ class HomeScreen extends StatelessWidget {
     required this.onPreviousMonth,
     required this.onNextMonth,
     required this.onSettings,
+    required this.onBudgetTap,
+    required this.onExpenseTap,
+    required this.onIncomeTap,
+    required this.onFixedCostTap,
   });
 
   final DateTime selectedMonth;
@@ -26,6 +30,10 @@ class HomeScreen extends StatelessWidget {
   final VoidCallback onPreviousMonth;
   final VoidCallback onNextMonth;
   final VoidCallback onSettings;
+  final VoidCallback onBudgetTap;
+  final VoidCallback onExpenseTap;
+  final VoidCallback onIncomeTap;
+  final VoidCallback onFixedCostTap;
 
   static final NumberFormat _moneyFormat = NumberFormat('#,###');
 
@@ -36,7 +44,10 @@ class HomeScreen extends StatelessWidget {
   int get fixedTotal {
     return fixedCosts
         .where((fixedCost) => fixedCost.isActive)
-        .fold(0, (total, fixedCost) => total + fixedCost.amount);
+        .fold(
+          0,
+          (total, fixedCost) => total + fixedCost.amountForMonth(selectedMonth),
+        );
   }
 
   int get spendingTotal => variableTotal + fixedTotal;
@@ -52,8 +63,13 @@ class HomeScreen extends StatelessWidget {
     for (final FixedCost fixedCost in fixedCosts.where(
       (item) => item.isActive,
     )) {
-      totals[fixedCost.category] =
-          (totals[fixedCost.category] ?? 0) + fixedCost.amount;
+      final int amount = fixedCost.amountForMonth(selectedMonth);
+
+      if (amount <= 0) {
+        continue;
+      }
+
+      totals[fixedCost.category] = (totals[fixedCost.category] ?? 0) + amount;
     }
 
     return totals;
@@ -138,6 +154,7 @@ class HomeScreen extends StatelessWidget {
                   title: '予算',
                   amount: budget,
                   color: Colors.blue,
+                  onTap: onBudgetTap,
                 ),
               ),
               const SizedBox(width: 8),
@@ -146,6 +163,7 @@ class HomeScreen extends StatelessWidget {
                   title: '支出',
                   amount: spendingTotal,
                   color: Colors.red,
+                  onTap: onExpenseTap,
                 ),
               ),
             ],
@@ -158,6 +176,7 @@ class HomeScreen extends StatelessWidget {
                   title: '収入',
                   amount: income,
                   color: Colors.green,
+                  onTap: onIncomeTap,
                 ),
               ),
               const SizedBox(width: 8),
@@ -166,6 +185,7 @@ class HomeScreen extends StatelessWidget {
                   title: '固定費',
                   amount: fixedTotal,
                   color: Colors.purple,
+                  onTap: onFixedCostTap,
                 ),
               ),
             ],
@@ -280,34 +300,40 @@ class _MoneyCard extends StatelessWidget {
     required this.title,
     required this.amount,
     required this.color,
+    required this.onTap,
   });
 
   final String title;
   final int amount;
   final Color color;
+  final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
     final NumberFormat format = NumberFormat('#,###');
 
     return Card(
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 16),
-        child: Column(
-          children: [
-            Text(title),
-            const SizedBox(height: 6),
-            FittedBox(
-              child: Text(
-                '¥${format.format(amount)}',
-                style: TextStyle(
-                  fontSize: 20,
-                  fontWeight: FontWeight.bold,
-                  color: color,
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 16),
+          child: Column(
+            children: [
+              Text(title),
+              const SizedBox(height: 6),
+              FittedBox(
+                child: Text(
+                  '¥${format.format(amount)}',
+                  style: TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.bold,
+                    color: color,
+                  ),
                 ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );

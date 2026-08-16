@@ -1,3 +1,6 @@
+import 'dart:async';
+
+import 'package:app_links/app_links.dart';
 import 'package:flutter/material.dart';
 
 import 'data_service.dart';
@@ -12,6 +15,8 @@ import 'screens/fixed_cost_screen.dart';
 import 'screens/home_screen.dart';
 import 'screens/income_form_screen.dart';
 import 'screens/record_screen.dart';
+
+enum FixedCostChangeScope { thisMonth, fromThisMonth, allMonths }
 
 void main() {
   runApp(const MyApp());
@@ -43,9 +48,15 @@ class MyHomePage extends StatefulWidget {
 
 class _MyHomePageState extends State<MyHomePage> {
   final DataService _dataService = DataService();
+  final AppLinks _appLinks = AppLinks();
+
+  StreamSubscription<Uri>? _linkSubscription;
 
   int _selectedIndex = 0;
+  RecordType _selectedRecordType = RecordType.expense;
   bool _isLoading = true;
+  bool _pendingExpenseShortcut = false;
+  bool _isExpenseDialogOpen = false;
 
   DateTime _selectedMonth = DateTime(DateTime.now().year, DateTime.now().month);
 
@@ -103,7 +114,52 @@ class _MyHomePageState extends State<MyHomePage> {
   @override
   void initState() {
     super.initState();
+    _listenForShortcutLinks();
     _loadAllData();
+  }
+
+  @override
+  void dispose() {
+    _linkSubscription?.cancel();
+    super.dispose();
+  }
+
+  void _listenForShortcutLinks() {
+    _linkSubscription = _appLinks.uriLinkStream.listen(_handleAppLink);
+  }
+
+  void _handleAppLink(Uri uri) {
+    final bool isExpenseShortcut =
+        uri.scheme == 'myfinance' &&
+        (uri.host == 'add-expense' || uri.path == '/add-expense');
+
+    if (!isExpenseShortcut) {
+      return;
+    }
+
+    if (_isLoading) {
+      _pendingExpenseShortcut = true;
+      return;
+    }
+
+    _openExpenseFromShortcut();
+  }
+
+  void _openExpenseFromShortcut() {
+    if (!mounted || _isExpenseDialogOpen) {
+      return;
+    }
+
+    setState(() {
+      _selectedRecordType = RecordType.expense;
+      _selectedIndex = 1;
+    });
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        _showExpenseDialog();
+      }
+    });
   }
 
   String _monthKey(DateTime date) {
@@ -178,6 +234,11 @@ class _MyHomePageState extends State<MyHomePage> {
       _incomeCategories = incomeCategories;
       _isLoading = false;
     });
+
+    if (_pendingExpenseShortcut) {
+      _pendingExpenseShortcut = false;
+      _openExpenseFromShortcut();
+    }
   }
 
   void _previousMonth() {
@@ -189,6 +250,26 @@ class _MyHomePageState extends State<MyHomePage> {
   void _nextMonth() {
     setState(() {
       _selectedMonth = DateTime(_selectedMonth.year, _selectedMonth.month + 1);
+    });
+  }
+
+  void _openExpenseRecords() {
+    setState(() {
+      _selectedRecordType = RecordType.expense;
+      _selectedIndex = 1;
+    });
+  }
+
+  void _openIncomeRecords() {
+    setState(() {
+      _selectedRecordType = RecordType.income;
+      _selectedIndex = 1;
+    });
+  }
+
+  void _openFixedCosts() {
+    setState(() {
+      _selectedIndex = 2;
     });
   }
 
@@ -245,6 +326,12 @@ class _MyHomePageState extends State<MyHomePage> {
   }
 
   Future<void> _showExpenseDialog({Expense? existingExpense}) async {
+    if (_isExpenseDialogOpen) {
+      return;
+    }
+
+    _isExpenseDialogOpen = true;
+
     final TextEditingController amountController = TextEditingController(
       text: existingExpense?.amount.toString() ?? '',
     );
@@ -257,129 +344,138 @@ class _MyHomePageState extends State<MyHomePage> {
 
     DateTime date = existingExpense?.date ?? DateTime.now();
 
-    await showDialog<void>(
-      context: context,
-      builder: (dialogContext) {
-        return StatefulBuilder(
-          builder: (context, setDialogState) {
-            return AlertDialog(
-              title: Text(existingExpense == null ? '支出を追加' : '支出を編集'),
-              content: SingleChildScrollView(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    TextField(
-                      controller: amountController,
-                      keyboardType: TextInputType.number,
-                      decoration: const InputDecoration(
-                        labelText: '金額',
-                        prefixText: '¥',
-                        border: OutlineInputBorder(),
+    try {
+      await showDialog<void>(
+        context: context,
+        builder: (dialogContext) {
+          return StatefulBuilder(
+            builder: (context, setDialogState) {
+              return AlertDialog(
+                title: Text(existingExpense == null ? '支出を追加' : '支出を編集'),
+                content: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      TextField(
+                        controller: amountController,
+                        keyboardType: TextInputType.number,
+                        decoration: const InputDecoration(
+                          labelText: '金額',
+                          prefixText: '¥',
+                          border: OutlineInputBorder(),
+                        ),
                       ),
-                    ),
-                    const SizedBox(height: 16),
-                    DropdownButtonFormField<String>(
-                      initialValue: category,
-                      isExpanded: true,
-                      decoration: const InputDecoration(
-                        labelText: '支出カテゴリ',
-                        border: OutlineInputBorder(),
+                      const SizedBox(height: 16),
+                      DropdownButtonFormField<String>(
+                        initialValue: category,
+                        isExpanded: true,
+                        decoration: const InputDecoration(
+                          labelText: '支出カテゴリ',
+                          border: OutlineInputBorder(),
+                        ),
+                        items: _expenseCategories.map((item) {
+                          return DropdownMenuItem(
+                            value: item,
+                            child: Text(item),
+                          );
+                        }).toList(),
+                        onChanged: (value) {
+                          if (value != null) {
+                            setDialogState(() {
+                              category = value;
+                            });
+                          }
+                        },
                       ),
-                      items: _expenseCategories.map((item) {
-                        return DropdownMenuItem(value: item, child: Text(item));
-                      }).toList(),
-                      onChanged: (value) {
-                        if (value != null) {
-                          setDialogState(() {
-                            category = value;
-                          });
-                        }
-                      },
-                    ),
-                    const SizedBox(height: 8),
-                    ListTile(
-                      contentPadding: EdgeInsets.zero,
-                      title: const Text('日付'),
-                      subtitle: Text('${date.year}年${date.month}月${date.day}日'),
-                      trailing: const Icon(Icons.calendar_today),
-                      onTap: () async {
-                        final DateTime? picked = await showDatePicker(
-                          context: context,
-                          initialDate: date,
-                          firstDate: DateTime(2020),
-                          lastDate: DateTime(2100),
-                        );
+                      const SizedBox(height: 8),
+                      ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        title: const Text('日付'),
+                        subtitle: Text(
+                          '${date.year}年${date.month}月${date.day}日',
+                        ),
+                        trailing: const Icon(Icons.calendar_today),
+                        onTap: () async {
+                          final DateTime? picked = await showDatePicker(
+                            context: context,
+                            initialDate: date,
+                            firstDate: DateTime(2020),
+                            lastDate: DateTime(2100),
+                          );
 
-                        if (picked != null) {
-                          setDialogState(() {
-                            date = picked;
-                          });
-                        }
-                      },
-                    ),
-                    TextField(
-                      controller: memoController,
-                      decoration: const InputDecoration(
-                        labelText: 'メモ',
-                        border: OutlineInputBorder(),
+                          if (picked != null) {
+                            setDialogState(() {
+                              date = picked;
+                            });
+                          }
+                        },
                       ),
-                    ),
-                  ],
+                      TextField(
+                        controller: memoController,
+                        decoration: const InputDecoration(
+                          labelText: 'メモ',
+                          border: OutlineInputBorder(),
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () {
-                    Navigator.pop(dialogContext);
-                  },
-                  child: const Text('キャンセル'),
-                ),
-                FilledButton(
-                  onPressed: () async {
-                    final int? amount = int.tryParse(amountController.text);
-
-                    if (amount == null || amount <= 0) {
-                      return;
-                    }
-
-                    final Expense expense = Expense(
-                      id:
-                          existingExpense?.id ??
-                          DateTime.now().microsecondsSinceEpoch.toString(),
-                      amount: amount,
-                      category: category,
-                      memo: memoController.text.trim(),
-                      date: date,
-                    );
-
-                    setState(() {
-                      if (existingExpense == null) {
-                        _expenses.add(expense);
-                      } else {
-                        final int index = _expenses.indexWhere(
-                          (item) => item.id == existingExpense.id,
-                        );
-
-                        if (index >= 0) {
-                          _expenses[index] = expense;
-                        }
-                      }
-                    });
-
-                    await _dataService.saveExpenses(_expenses);
-
-                    if (dialogContext.mounted) {
+                actions: [
+                  TextButton(
+                    onPressed: () {
                       Navigator.pop(dialogContext);
-                    }
-                  },
-                  child: Text(existingExpense == null ? '保存' : '更新'),
-                ),
-              ],
-            );
-          },
-        );
-      },
-    );
+                    },
+                    child: const Text('キャンセル'),
+                  ),
+                  FilledButton(
+                    onPressed: () async {
+                      final int? amount = int.tryParse(amountController.text);
+
+                      if (amount == null || amount <= 0) {
+                        return;
+                      }
+
+                      final Expense expense = Expense(
+                        id:
+                            existingExpense?.id ??
+                            DateTime.now().microsecondsSinceEpoch.toString(),
+                        amount: amount,
+                        category: category,
+                        memo: memoController.text.trim(),
+                        date: date,
+                      );
+
+                      setState(() {
+                        if (existingExpense == null) {
+                          _expenses.add(expense);
+                        } else {
+                          final int index = _expenses.indexWhere(
+                            (item) => item.id == existingExpense.id,
+                          );
+
+                          if (index >= 0) {
+                            _expenses[index] = expense;
+                          }
+                        }
+                      });
+
+                      await _dataService.saveExpenses(_expenses);
+
+                      if (dialogContext.mounted) {
+                        Navigator.pop(dialogContext);
+                      }
+                    },
+                    child: Text(existingExpense == null ? '保存' : '更新'),
+                  ),
+                ],
+              );
+            },
+          );
+        },
+      );
+    } finally {
+      _isExpenseDialogOpen = false;
+    }
   }
 
   Future<void> _showIncomeScreen({IncomeRecord? existingIncome}) async {
@@ -432,16 +528,25 @@ class _MyHomePageState extends State<MyHomePage> {
     await _dataService.saveIncomeRecords(_incomeRecords);
   }
 
-  Future<void> _showFixedCostDialog({FixedCost? existingFixedCost}) async {
+  Future<void> _showFixedCostDialog({
+    FixedCost? existingFixedCost,
+    DateTime? targetMonth,
+  }) async {
+    final DateTime month = DateTime(
+      (targetMonth ?? _selectedMonth).year,
+      (targetMonth ?? _selectedMonth).month,
+    );
+
     final TextEditingController nameController = TextEditingController(
       text: existingFixedCost?.name ?? '',
     );
 
     final TextEditingController amountController = TextEditingController(
-      text: existingFixedCost?.amount.toString() ?? '',
+      text: existingFixedCost?.amountForMonth(month).toString() ?? '',
     );
 
     String category = existingFixedCost?.category ?? _fixedCostCategories.first;
+    FixedCostChangeScope changeScope = FixedCostChangeScope.thisMonth;
 
     await showDialog<void>(
       context: context,
@@ -461,6 +566,42 @@ class _MyHomePageState extends State<MyHomePage> {
                         border: OutlineInputBorder(),
                       ),
                     ),
+                    if (existingFixedCost != null) ...[
+                      const SizedBox(height: 16),
+                      DropdownButtonFormField<FixedCostChangeScope>(
+                        initialValue: changeScope,
+                        decoration: const InputDecoration(
+                          labelText: '金額を変更する範囲',
+                          border: OutlineInputBorder(),
+                        ),
+                        items: const [
+                          DropdownMenuItem(
+                            value: FixedCostChangeScope.thisMonth,
+                            child: Text('この月だけ変更'),
+                          ),
+                          DropdownMenuItem(
+                            value: FixedCostChangeScope.fromThisMonth,
+                            child: Text('この月以降を変更'),
+                          ),
+                          DropdownMenuItem(
+                            value: FixedCostChangeScope.allMonths,
+                            child: Text('すべての月を変更'),
+                          ),
+                        ],
+                        onChanged: (value) {
+                          if (value != null) {
+                            setDialogState(() {
+                              changeScope = value;
+                            });
+                          }
+                        },
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        '対象：${month.year}年${month.month}月',
+                        style: TextStyle(color: Colors.grey.shade700),
+                      ),
+                    ],
                     const SizedBox(height: 16),
                     TextField(
                       controller: amountController,
@@ -506,19 +647,85 @@ class _MyHomePageState extends State<MyHomePage> {
 
                     final int? amount = int.tryParse(amountController.text);
 
-                    if (name.isEmpty || amount == null || amount <= 0) {
+                    final bool invalidAmount = existingFixedCost == null
+                        ? amount == null || amount <= 0
+                        : amount == null || amount < 0;
+
+                    if (name.isEmpty || invalidAmount) {
                       return;
                     }
 
-                    final FixedCost fixedCost = FixedCost(
-                      id:
-                          existingFixedCost?.id ??
-                          DateTime.now().microsecondsSinceEpoch.toString(),
-                      name: name,
-                      amount: amount,
-                      category: category,
-                      isActive: existingFixedCost?.isActive ?? true,
-                    );
+                    if (existingFixedCost != null &&
+                        amount != existingFixedCost.amountForMonth(month)) {
+                      final bool confirmed =
+                          await showDialog<bool>(
+                            context: dialogContext,
+                            builder: (confirmationContext) {
+                              return AlertDialog(
+                                title: const Text('固定費を変更しますか？'),
+                                content: Text(
+                                  '${month.year}年${month.month}月の'
+                                  '${existingFixedCost.name}を変更します。',
+                                ),
+                                actions: [
+                                  TextButton(
+                                    onPressed: () {
+                                      Navigator.pop(confirmationContext, false);
+                                    },
+                                    child: const Text('キャンセル'),
+                                  ),
+                                  FilledButton(
+                                    onPressed: () {
+                                      Navigator.pop(confirmationContext, true);
+                                    },
+                                    child: const Text('変更'),
+                                  ),
+                                ],
+                              );
+                            },
+                          ) ??
+                          false;
+
+                      if (!confirmed) {
+                        return;
+                      }
+                    }
+
+                    final FixedCost fixedCost;
+
+                    if (existingFixedCost == null) {
+                      fixedCost = FixedCost(
+                        id: DateTime.now().microsecondsSinceEpoch.toString(),
+                        name: name,
+                        amount: amount,
+                        category: category,
+                        isActive: true,
+                        startMonth: FixedCost.monthKey(month),
+                      );
+                    } else {
+                      FixedCost updated = existingFixedCost.copyWith(
+                        name: name,
+                        category: category,
+                      );
+
+                      if (amount != existingFixedCost.amountForMonth(month)) {
+                        switch (changeScope) {
+                          case FixedCostChangeScope.thisMonth:
+                            updated = updated.withAmountForMonth(month, amount);
+
+                          case FixedCostChangeScope.fromThisMonth:
+                            updated = updated.withAmountFromMonth(
+                              month,
+                              amount,
+                            );
+
+                          case FixedCostChangeScope.allMonths:
+                            updated = updated.withAmountForAllMonths(amount);
+                        }
+                      }
+
+                      fixedCost = updated;
+                    }
 
                     setState(() {
                       if (existingFixedCost == null) {
@@ -971,10 +1178,18 @@ class _MyHomePageState extends State<MyHomePage> {
         onPreviousMonth: _previousMonth,
         onNextMonth: _nextMonth,
         onSettings: _showSettingsMenu,
+        onBudgetTap: _showMonthlySettings,
+        onExpenseTap: _openExpenseRecords,
+        onIncomeTap: _openIncomeRecords,
+        onFixedCostTap: _openFixedCosts,
       ),
       RecordScreen(
         expenses: _currentExpenses,
         incomeRecords: _currentIncomeRecords,
+        initialType: _selectedRecordType,
+        onTypeChanged: (type) {
+          _selectedRecordType = type;
+        },
         onEditExpense: (expense) {
           _showExpenseDialog(existingExpense: expense);
         },
@@ -989,9 +1204,15 @@ class _MyHomePageState extends State<MyHomePage> {
         },
       ),
       FixedCostScreen(
+        selectedMonth: _selectedMonth,
         fixedCosts: _fixedCosts,
-        onEdit: (fixedCost) {
-          _showFixedCostDialog(existingFixedCost: fixedCost);
+        onPreviousMonth: _previousMonth,
+        onNextMonth: _nextMonth,
+        onEdit: (fixedCost, month) {
+          _showFixedCostDialog(
+            existingFixedCost: fixedCost,
+            targetMonth: month,
+          );
         },
         onDelete: (fixedCost) {
           _deleteFixedCost(fixedCost);

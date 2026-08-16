@@ -268,10 +268,6 @@ class _CategorySettingsScreenState extends State<CategorySettingsScreen> {
   ) async {
     final List<String> categories = _categoriesFor(group);
 
-    if (newIndex > oldIndex) {
-      newIndex -= 1;
-    }
-
     setState(() {
       final String moved = categories.removeAt(oldIndex);
 
@@ -290,7 +286,7 @@ class _CategorySettingsScreenState extends State<CategorySettingsScreen> {
           child: ReorderableListView.builder(
             padding: const EdgeInsets.all(16),
             itemCount: categories.length,
-            onReorder: (oldIndex, newIndex) {
+            onReorderItem: (oldIndex, newIndex) {
               _reorderCategory(group, oldIndex, newIndex);
             },
             itemBuilder: (context, index) {
